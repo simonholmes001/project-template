@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "dev"
+    },
+    "location": {
+      "value": "{{AZURE_LOCATION}}"
+    },
+    "githubOrg": {
+      "value": "{{GITHUB_OWNER}}"
+    },
+    "githubRepo": {
+      "value": "{{REPO_NAME}}"
+    },
+    "githubEnvironment": {
+      "value": "dev"
+    },
+    "pipelineResourceGroupName": {
+      "value": "rg-{{REPO_NAME}}-pipeline-identity"
+    },
+    "targetResourceGroupName": {
+      "value": "rg-{{REPO_NAME}}-dev"
+    },
+    "pipelineIdentityName": {
+      "value": "id-{{REPO_NAME}}-github-actions"
+    }
+  }
+}

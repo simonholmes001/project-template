@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-template:
+    name: Validate Template
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Check script syntax
+        shell: bash
+        run: bash -n scripts/*.sh
+
+      - name: Generate managed-identity sample
+        shell: bash
+        run: |
+          scripts/new-project.sh \
+            --name "Signal Desk" \
+            --repo "signal-desk" \
+            --github-owner "simonholmes001" \
+            --project-number "11" \
+            --destination "/tmp/project-template-signal-desk" \
+            --profile azure-managed-identity-oidc \
+            --module ios-testflight \
+            --module backend-function \
+            --description "Signal Desk app foundation"
+
+      - name: Check managed-identity sample drift
+        shell: bash
+        run: |
+          scripts/drift-check.sh \
+            --target "/tmp/project-template-signal-desk" \
+            --name "Signal Desk" \
+            --repo "signal-desk" \
+            --github-owner "simonholmes001" \
+            --project-number "11" \
+            --profile azure-managed-identity-oidc \
+            --module ios-testflight \
+            --module backend-function \
+            --description "Signal Desk app foundation"
+
+      - name: Test generated managed-identity sample
+        working-directory: /tmp/project-template-signal-desk
+        run: npm test
+
+      - name: Generate app-registration sample
+        shell: bash
+        run: |
+          scripts/new-project.sh \
+            --name "Paper Trail" \
+            --repo "paper-trail" \
+            --github-owner "simonholmes001" \
+            --project-number "7" \
+            --destination "/tmp/project-template-paper-trail" \
+            --profile azure-app-registration-oidc \
+            --description "Paper Trail app foundation"
+
+      - name: Check app-registration sample drift
+        shell: bash
+        run: |
+          scripts/drift-check.sh \
+            --target "/tmp/project-template-paper-trail" \
+            --name "Paper Trail" \
+            --repo "paper-trail" \
+            --github-owner "simonholmes001" \
+            --project-number "7" \
+            --profile azure-app-registration-oidc \
+            --description "Paper Trail app foundation"
+
+      - name: Test generated app-registration sample
+        working-directory: /tmp/project-template-paper-trail
+        run: npm test
+

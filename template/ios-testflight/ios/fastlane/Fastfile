@@ -1,0 +1,209 @@
+require "shellwords"
+require "xcodeproj"
+
+SIGNABLE_PRODUCT_TYPES = %w[
+  com.apple.product-type.application
+  com.apple.product-type.app-extension
+  com.apple.product-type.messages-extension
+  com.apple.product-type.watchkit2-app
+  com.apple.product-type.watchkit2-extension
+].freeze
+
+def validated_string!(key)
+  value = ENV[key]
+  UI.user_error!("Missing required environment variable: #{key}") if value.nil? || value.strip.empty?
+  value
+end
+
+def testflight_build_number
+  value = ENV["{{ENV_PREFIX}}_BUILD_NUMBER"] || ENV["GITHUB_RUN_NUMBER"]
+  UI.user_error!("Missing build number: set {{ENV_PREFIX}}_BUILD_NUMBER or run in GitHub Actions.") if value.nil? || value.strip.empty?
+  UI.user_error!("Build number must be numeric: #{value}") unless value.match?(/\A\d+\z/)
+  value
+end
+
+def xcode_container_path(key)
+  value = ENV[key]
+  return nil if value.nil? || value.strip.empty?
+
+  configured_path = value.strip
+  candidates = [configured_path]
+  unless configured_path.start_with?("/")
+    candidates << File.join("..", configured_path)
+    candidates << File.join("..", "..", configured_path)
+  end
+  candidates = candidates.map { |path| File.expand_path(path) }.uniq
+  resolved_path = candidates.find { |path| File.exist?(path) }
+
+  UI.user_error!("Configured #{key} not found. Checked: #{candidates.join(', ')}") if resolved_path.nil?
+  resolved_path
+end
+
+def ci_keychain_name
+  ENV["MATCH_KEYCHAIN_NAME"] || "{{REPO_NAME}}-ci-signing.keychain"
+end
+
+def ci_keychain_password
+  ENV["MATCH_KEYCHAIN_PASSWORD"]
+end
+
+def using_ci_keychain?
+  !ci_keychain_password.nil? && !ci_keychain_password.strip.empty?
+end
+
+def create_ci_keychain
+  return unless using_ci_keychain?
+
+  create_keychain(
+    name: ci_keychain_name,
+    password: ci_keychain_password,
+    default_keychain: true,
+    unlock: true,
+    timeout: 3600,
+    lock_when_sleeps: false
+  )
+end
+
+def delete_ci_keychain
+  return unless using_ci_keychain?
+
+  delete_keychain(name: ci_keychain_name)
+end
+
+def sync_appstore_signing
+  options = { type: "appstore", readonly: true }
+  if using_ci_keychain?
+    options[:keychain_name] = ci_keychain_name
+    options[:keychain_password] = ci_keychain_password
+  end
+
+  sync_code_signing(**options)
+end
+
+def app_identifier
+  ENV.fetch("{{ENV_PREFIX}}_APP_IDENTIFIER")
+end
+
+def appstore_profile_name
+  mapping = Actions.lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING] || {}
+  mapping[app_identifier] || ENV["sigh_#{app_identifier}_appstore_profile-name"] || "match AppStore #{app_identifier}"
+end
+
+def appstore_profile_mapping
+  mapping = Actions.lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING] || {}
+  if mapping.empty?
+    return { app_identifier => appstore_profile_name }
+  end
+
+  unless mapping.key?(app_identifier)
+    UI.user_error!(
+      "Match App Store profile mapping does not include #{app_identifier}. " \
+      "Found: #{mapping.keys.join(', ')}"
+    )
+  end
+
+  mapping
+end
+
+def assert_single_appstore_archive_target!
+  project_path = xcode_container_path("{{ENV_PREFIX}}_XCODE_PROJECT")
+  UI.user_error!("{{ENV_PREFIX}}_XCODE_PROJECT is required for manual App Store archive signing.") if project_path.nil?
+
+  project = Xcodeproj::Project.open(project_path)
+  signable_targets = project.native_targets.select do |target|
+    SIGNABLE_PRODUCT_TYPES.include?(target.product_type)
+  end
+  bundle_identifiers = signable_targets
+                       .flat_map do |target|
+                         target.build_configurations.map do |configuration|
+                           configuration.resolve_build_setting("PRODUCT_BUNDLE_IDENTIFIER").to_s.strip
+                         end
+                       end
+                       .reject(&:empty?)
+                       .uniq
+
+  if signable_targets.length != 1 || bundle_identifiers != [app_identifier]
+    UI.user_error!(
+      "Manual App Store archive signing is configured for a single bundle only. " \
+      "Found signable targets: #{signable_targets.map(&:name).join(', ')}; " \
+      "bundle identifiers: #{bundle_identifiers.join(', ')}. " \
+      "Add Match profiles for every signable target before extending this lane."
+    )
+  end
+end
+
+def appstore_xcargs
+  [
+    "CURRENT_PROJECT_VERSION=#{testflight_build_number}",
+    "CODE_SIGN_STYLE=Manual",
+    "DEVELOPMENT_TEAM=#{ENV.fetch("{{ENV_PREFIX}}_TEAM_ID")}",
+    "PROVISIONING_PROFILE_SPECIFIER=#{Shellwords.escape(appstore_profile_name)}",
+    "CODE_SIGN_IDENTITY=#{Shellwords.escape("Apple Distribution")}"
+  ].join(" ")
+end
+
+def appstore_export_options
+  {
+    signingStyle: "manual",
+    teamID: ENV.fetch("{{ENV_PREFIX}}_TEAM_ID"),
+    provisioningProfiles: appstore_profile_mapping
+  }
+end
+
+platform :ios do
+  desc "Verify required App Store/TestFlight environment configuration"
+  lane :verify_distribution_env do
+    %w[
+      {{ENV_PREFIX}}_APP_IDENTIFIER
+      {{ENV_PREFIX}}_APPLE_ID
+      {{ENV_PREFIX}}_ITC_TEAM_ID
+      {{ENV_PREFIX}}_TEAM_ID
+      MATCH_GIT_URL
+      MATCH_PASSWORD
+      APP_STORE_CONNECT_API_KEY_ID
+      APP_STORE_CONNECT_API_ISSUER_ID
+      APP_STORE_CONNECT_API_KEY_PATH
+      {{ENV_PREFIX}}_XCODE_SCHEME
+    ].each { |key| validated_string!(key) }
+  end
+
+  desc "Sync App Store distribution certificates and provisioning profiles"
+  lane :prepare_signing do
+    verify_distribution_env
+    create_ci_keychain
+    sync_appstore_signing
+  end
+
+  desc "Build and upload a TestFlight build for internal testing"
+  lane :upload_internal_testflight do
+    verify_distribution_env
+    prepare_signing
+    assert_single_appstore_archive_target!
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
+      issuer_id: ENV.fetch("APP_STORE_CONNECT_API_ISSUER_ID"),
+      key_filepath: ENV.fetch("APP_STORE_CONNECT_API_KEY_PATH")
+    )
+
+    build_app(
+      scheme: ENV.fetch("{{ENV_PREFIX}}_XCODE_SCHEME"),
+      configuration: "Release",
+      export_method: "app-store",
+      export_options: appstore_export_options,
+      skip_profile_detection: true,
+      clean: true,
+      xcargs: appstore_xcargs,
+      project: xcode_container_path("{{ENV_PREFIX}}_XCODE_PROJECT"),
+      workspace: xcode_container_path("{{ENV_PREFIX}}_XCODE_WORKSPACE")
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      skip_waiting_for_build_processing: true,
+      distribute_external: false,
+      groups: ["Internal"]
+    )
+  ensure
+    delete_ci_keychain
+  end
+end

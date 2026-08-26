@@ -1,0 +1,1031 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.46.1.21595",
+      "templateHash": "17285726958529892224"
+    }
+  },
+  "parameters": {
+    "environmentName": {
+      "type": "string",
+      "allowedValues": [
+        "dev",
+        "staging",
+        "prod"
+      ],
+      "metadata": {
+        "description": "Deployment environment name."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for {{PROJECT_NAME}} resources."
+      }
+    },
+    "openAiApiKey": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "OpenAI API key to store in Key Vault. Use a placeholder in validation environments if the app is not deployed yet."
+      }
+    },
+    "deployCosmos": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Whether to deploy Cosmos DB serverless as the initial durable store candidate."
+      }
+    },
+    "enablePrivateNetworking": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Deploy private networking controls: VNet integration, private endpoints, and private DNS zones."
+      }
+    },
+    "allowPublicNetworkAccessForDev": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Temporary dev/test escape hatch. Keep false for production."
+      }
+    },
+    "enablePrivateFunctionIngress": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Make the Function App ingress private. Leave false for the mobile MVP unless a public edge such as Front Door, API Management, or VPN is added."
+      }
+    },
+    "appInsightsDailyCapGb": {
+      "type": "int",
+      "defaultValue": 1,
+      "minValue": 1,
+      "metadata": {
+        "description": "Application Insights daily data cap in GB."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "application": "{{REPO_NAME}}",
+        "environment": "[parameters('environmentName')]",
+        "managedBy": "bicep",
+        "costProfile": "minimal"
+      },
+      "metadata": {
+        "description": "Common Azure resource tags."
+      }
+    }
+  },
+  "variables": {
+    "resourceToken": "[uniqueString(subscription().id, resourceGroup().id, parameters('location'), parameters('environmentName'))]",
+    "storageBlobDataOwnerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
+    "storageBlobDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+    "storageQueueDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
+    "storageTableDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')]",
+    "monitoringMetricsPublisherRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')]",
+    "keyVaultSecretsOfficerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')]",
+    "keyVaultSecretsUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
+    "publicNetworkAccessValue": "[if(and(parameters('enablePrivateNetworking'), not(parameters('allowPublicNetworkAccessForDev'))), 'Disabled', 'Enabled')]",
+    "functionPublicNetworkAccessValue": "[if(parameters('enablePrivateFunctionIngress'), 'Disabled', 'Enabled')]"
+  },
+  "resources": [
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2024-03-01",
+      "name": "[format('azvnet{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.42.0.0/24"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "function-integration",
+            "properties": {
+              "addressPrefix": "10.42.0.0/27",
+              "delegations": [
+                {
+                  "name": "function-flex-delegation",
+                  "properties": {
+                    "serviceName": "Microsoft.App/environments"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "private-endpoints",
+            "properties": {
+              "addressPrefix": "10.42.0.32/27",
+              "privateEndpointNetworkPolicies": "Disabled"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "privatelink.blob.core.windows.net",
+      "location": "global",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "privatelink.queue.core.windows.net",
+      "location": "global",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "privatelink.table.core.windows.net",
+      "location": "global",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "privatelink.vaultcore.azure.net",
+      "location": "global",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "condition": "[and(parameters('enablePrivateNetworking'), parameters('enablePrivateFunctionIngress'))]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "privatelink.azurewebsites.net",
+      "location": "global",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "condition": "[and(parameters('enablePrivateNetworking'), parameters('deployCosmos'))]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "privatelink.documents.azure.com",
+      "location": "global",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'privatelink.blob.core.windows.net', '{{REPO_NAME}}-vnet')]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.blob.core.windows.net')]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'privatelink.queue.core.windows.net', '{{REPO_NAME}}-vnet')]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.queue.core.windows.net')]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'privatelink.table.core.windows.net', '{{REPO_NAME}}-vnet')]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.table.core.windows.net')]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'privatelink.vaultcore.azure.net', '{{REPO_NAME}}-vnet')]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.vaultcore.azure.net')]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[and(parameters('enablePrivateNetworking'), parameters('enablePrivateFunctionIngress'))]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'privatelink.azurewebsites.net', '{{REPO_NAME}}-vnet')]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.azurewebsites.net')]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[and(parameters('enablePrivateNetworking'), parameters('deployCosmos'))]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', 'privatelink.documents.azure.com', '{{REPO_NAME}}-vnet')]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.documents.azure.com')]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[format('azidn{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[take(format('azstg{0}', variables('resourceToken')), 24)]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "allowBlobPublicAccess": false,
+        "allowSharedKeyAccess": false,
+        "defaultToOAuthAuthentication": true,
+        "minimumTlsVersion": "TLS1_2",
+        "supportsHttpsTrafficOnly": true,
+        "publicNetworkAccess": "[variables('publicNetworkAccessValue')]"
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', take(format('azstg{0}', variables('resourceToken')), 24), 'default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', take(format('azstg{0}', variables('resourceToken')), 24), 'default', 'function-releases')]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', take(format('azstg{0}', variables('resourceToken')), 24), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[take(format('azkv{0}', variables('resourceToken')), 24)]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "tenantId": "[tenant().tenantId]",
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "enableRbacAuthorization": true,
+        "enableSoftDelete": true,
+        "enabledForTemplateDeployment": false,
+        "publicNetworkAccess": "[variables('publicNetworkAccessValue')]",
+        "softDeleteRetentionInDays": 7
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('keyVaultSecretsOfficerRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('keyVaultSecretsOfficerRoleId')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('keyVaultSecretsUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('keyVaultSecretsUserRoleId')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24))]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[format('{0}/{1}', take(format('azkv{0}', variables('resourceToken')), 24), 'openai-api-key')]",
+      "properties": {
+        "value": "[parameters('openAiApiKey')]"
+      },
+      "dependsOn": [
+        "[extensionResourceId(resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24)), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('keyVaultSecretsOfficerRoleId')))]",
+        "[resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24))]"
+      ]
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[format('azlog{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30,
+        "features": {
+          "enableLogAccessUsingOnlyResourcePermissions": true
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[format('azain{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', format('azlog{0}', variables('resourceToken')))]",
+        "RetentionInDays": 30,
+        "IngestionMode": "LogAnalytics"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', format('azlog{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Insights/components/CurrentBillingFeatures",
+      "apiVersion": "2020-02-02",
+      "name": "[format('{0}/{1}', format('azain{0}', variables('resourceToken')), 'current')]",
+      "properties": {
+        "DataVolumeCap": {
+          "Cap": "[parameters('appInsightsDailyCapGb')]",
+          "StopSendNotificationWhenHitCap": false,
+          "StopSendNotificationWhenHitThreshold": false,
+          "WarningThreshold": 80
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/components', format('azain{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2024-04-01",
+      "name": "[format('azasp{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "functionapp",
+      "sku": {
+        "name": "FC1",
+        "tier": "FlexConsumption"
+      },
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2024-04-01",
+      "name": "[format('azfun{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "functionapp,linux",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))))]": {}
+        }
+      },
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', format('azasp{0}', variables('resourceToken')))]",
+        "httpsOnly": true,
+        "publicNetworkAccess": "[variables('functionPublicNetworkAccessValue')]",
+        "virtualNetworkSubnetId": "[if(parameters('enablePrivateNetworking'), resourceId('Microsoft.Network/virtualNetworks/subnets', format('azvnet{0}', variables('resourceToken')), 'function-integration'), null())]",
+        "functionAppConfig": {
+          "runtime": {
+            "name": "dotnet-isolated",
+            "version": "10.0"
+          },
+          "deployment": {
+            "storage": {
+              "type": "blobContainer",
+              "value": "[format('{0}{1}', reference(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), '2023-05-01').primaryEndpoints.blob, 'function-releases')]",
+              "authentication": {
+                "type": "UserAssignedIdentity",
+                "userAssignedIdentityResourceId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken')))]"
+              }
+            }
+          },
+          "scaleAndConcurrency": {
+            "maximumInstanceCount": 10,
+            "instanceMemoryMB": 512
+          }
+        },
+        "siteConfig": {
+          "appSettings": [
+            {
+              "name": "AzureWebJobsStorage__accountName",
+              "value": "[take(format('azstg{0}', variables('resourceToken')), 24)]"
+            },
+            {
+              "name": "AzureWebJobsStorage__credential",
+              "value": "managedidentity"
+            },
+            {
+              "name": "AzureWebJobsStorage__clientId",
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), '2023-01-31').clientId]"
+            },
+            {
+              "name": "WEBSITE_VNET_ROUTE_ALL",
+              "value": "[if(parameters('enablePrivateNetworking'), '1', '0')]"
+            },
+            {
+              "name": "FUNCTIONS_EXTENSION_VERSION",
+              "value": "~4"
+            },
+            {
+              "name": "OPENAI_API_KEY",
+              "value": "[format('@Microsoft.KeyVault(SecretUri={0})', reference(resourceId('Microsoft.KeyVault/vaults/secrets', take(format('azkv{0}', variables('resourceToken')), 24), 'openai-api-key'), '2023-07-01').secretUriWithVersion)]"
+            },
+            {
+              "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "value": "[reference(resourceId('Microsoft.Insights/components', format('azain{0}', variables('resourceToken'))), '2020-02-02').ConnectionString]"
+            },
+            {
+              "name": "{{PROJECT_NAME_UPPER}}_ENVIRONMENT",
+              "value": "[parameters('environmentName')]"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.Insights/components', format('azain{0}', variables('resourceToken')))]",
+        "[extensionResourceId(resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24)), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('keyVaultSecretsUserRoleId')))]",
+        "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('monitoringMetricsPublisherRoleId')))]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('storageBlobDataContributorRoleId')))]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('storageBlobDataOwnerRoleId')))]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('storageQueueDataContributorRoleId')))]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('storageTableDataContributorRoleId')))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', take(format('azstg{0}', variables('resourceToken')), 24), 'default', 'function-releases')]",
+        "[resourceId('Microsoft.Web/serverfarms', format('azasp{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', take(format('azkv{0}', variables('resourceToken')), 24), 'openai-api-key')]",
+        "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('storageBlobDataOwnerRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageBlobDataOwnerRoleId')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('storageBlobDataContributorRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageBlobDataContributorRoleId')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('storageQueueDataContributorRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageQueueDataContributorRoleId')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24)), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('storageTableDataContributorRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageTableDataContributorRoleId')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), variables('monitoringMetricsPublisherRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('monitoringMetricsPublisherRoleId')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken'))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('azidn{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Insights/diagnosticSettings",
+      "apiVersion": "2021-05-01-preview",
+      "scope": "[resourceId('Microsoft.Web/sites', format('azfun{0}', variables('resourceToken')))]",
+      "name": "function-logs",
+      "properties": {
+        "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', format('azlog{0}', variables('resourceToken')))]",
+        "logs": [
+          {
+            "category": "FunctionAppLogs",
+            "enabled": true
+          }
+        ],
+        "metrics": [
+          {
+            "category": "AllMetrics",
+            "enabled": true
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', format('azfun{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.OperationalInsights/workspaces', format('azlog{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2024-03-01",
+      "name": "[format('azpepblob{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', format('azvnet{0}', variables('resourceToken')), 'private-endpoints')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "storage-blob",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+              "groupIds": [
+                "blob"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}/{1}', format('azpepblob{0}', variables('resourceToken')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "blob",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.blob.core.windows.net')]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.blob.core.windows.net')]",
+        "[resourceId('Microsoft.Network/privateEndpoints', format('azpepblob{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2024-03-01",
+      "name": "[format('azpepque{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', format('azvnet{0}', variables('resourceToken')), 'private-endpoints')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "storage-queue",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+              "groupIds": [
+                "queue"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}/{1}', format('azpepque{0}', variables('resourceToken')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "queue",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.queue.core.windows.net')]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.queue.core.windows.net')]",
+        "[resourceId('Microsoft.Network/privateEndpoints', format('azpepque{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2024-03-01",
+      "name": "[format('azpeptbl{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', format('azvnet{0}', variables('resourceToken')), 'private-endpoints')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "storage-table",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+              "groupIds": [
+                "table"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', take(format('azstg{0}', variables('resourceToken')), 24))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}/{1}', format('azpeptbl{0}', variables('resourceToken')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "table",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.table.core.windows.net')]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateEndpoints', format('azpeptbl{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.table.core.windows.net')]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2024-03-01",
+      "name": "[format('azpepkv{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', format('azvnet{0}', variables('resourceToken')), 'private-endpoints')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "key-vault",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24))]",
+              "groupIds": [
+                "vault"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', take(format('azkv{0}', variables('resourceToken')), 24))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePrivateNetworking')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}/{1}', format('azpepkv{0}', variables('resourceToken')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "vault",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.vaultcore.azure.net')]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateEndpoints', format('azpepkv{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.vaultcore.azure.net')]"
+      ]
+    },
+    {
+      "condition": "[and(parameters('enablePrivateNetworking'), parameters('enablePrivateFunctionIngress'))]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2024-03-01",
+      "name": "[format('azpepfn{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', format('azvnet{0}', variables('resourceToken')), 'private-endpoints')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "function-app",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.Web/sites', format('azfun{0}', variables('resourceToken')))]",
+              "groupIds": [
+                "sites"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', format('azfun{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[and(parameters('enablePrivateNetworking'), parameters('enablePrivateFunctionIngress'))]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}/{1}', format('azpepfn{0}', variables('resourceToken')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "sites",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.azurewebsites.net')]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.azurewebsites.net')]",
+        "[resourceId('Microsoft.Network/privateEndpoints', format('azpepfn{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('deployCosmos')]",
+      "type": "Microsoft.DocumentDB/databaseAccounts",
+      "apiVersion": "2024-05-15",
+      "name": "[format('azcos{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "GlobalDocumentDB",
+      "properties": {
+        "databaseAccountOfferType": "Standard",
+        "enableFreeTier": true,
+        "enableAutomaticFailover": false,
+        "publicNetworkAccess": "[variables('publicNetworkAccessValue')]",
+        "networkAclBypass": "[if(parameters('enablePrivateNetworking'), 'None', 'AzureServices')]",
+        "ipRules": "[if(parameters('enablePrivateNetworking'), createArray(), createArray(createObject('ipAddressOrRange', '0.0.0.0')))]",
+        "consistencyPolicy": {
+          "defaultConsistencyLevel": "Session"
+        },
+        "locations": [
+          {
+            "locationName": "[parameters('location')]",
+            "failoverPriority": 0,
+            "isZoneRedundant": false
+          }
+        ],
+        "capabilities": [
+          {
+            "name": "EnableServerless"
+          }
+        ]
+      }
+    },
+    {
+      "condition": "[parameters('deployCosmos')]",
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+      "apiVersion": "2024-05-15",
+      "name": "[format('{0}/{1}', format('azcos{0}', variables('resourceToken')), '{{REPO_NAME}}')]",
+      "properties": {
+        "resource": {
+          "id": "{{REPO_NAME}}"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts', format('azcos{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('deployCosmos')]",
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+      "apiVersion": "2024-05-15",
+      "name": "[format('{0}/{1}/{2}', format('azcos{0}', variables('resourceToken')), '{{REPO_NAME}}', 'learner-events')]",
+      "properties": {
+        "resource": {
+          "id": "learner-events",
+          "partitionKey": {
+            "paths": [
+              "/userId"
+            ],
+            "kind": "Hash"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', format('azcos{0}', variables('resourceToken')), '{{REPO_NAME}}')]"
+      ]
+    },
+    {
+      "condition": "[and(parameters('enablePrivateNetworking'), parameters('deployCosmos'))]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2024-03-01",
+      "name": "[format('azpepcos{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', format('azvnet{0}', variables('resourceToken')), 'private-endpoints')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "cosmos-sql",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.DocumentDB/databaseAccounts', format('azcos{0}', variables('resourceToken')))]",
+              "groupIds": [
+                "Sql"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts', format('azcos{0}', variables('resourceToken')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('azvnet{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "condition": "[and(parameters('enablePrivateNetworking'), parameters('deployCosmos'))]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}/{1}', format('azpepcos{0}', variables('resourceToken')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "documents",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.documents.azure.com')]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.documents.azure.com')]",
+        "[resourceId('Microsoft.Network/privateEndpoints', format('azpepcos{0}', variables('resourceToken')))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "functionAppName": {
+      "type": "string",
+      "value": "[format('azfun{0}', variables('resourceToken'))]"
+    },
+    "functionAppHostName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Web/sites', format('azfun{0}', variables('resourceToken'))), '2024-04-01').defaultHostName]"
+    },
+    "keyVaultName": {
+      "type": "string",
+      "value": "[take(format('azkv{0}', variables('resourceToken')), 24)]"
+    },
+    "storageAccountName": {
+      "type": "string",
+      "value": "[take(format('azstg{0}', variables('resourceToken')), 24)]"
+    },
+    "applicationInsightsName": {
+      "type": "string",
+      "value": "[format('azain{0}', variables('resourceToken'))]"
+    },
+    "cosmosAccountName": {
+      "type": "string",
+      "value": "[if(parameters('deployCosmos'), format('azcos{0}', variables('resourceToken')), '')]"
+    },
+    "virtualNetworkName": {
+      "type": "string",
+      "value": "[if(parameters('enablePrivateNetworking'), format('azvnet{0}', variables('resourceToken')), '')]"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+name: iOS Tests
+
+on:
+  pull_request:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-tests.yml'
+
+jobs:
+  swift-test:
+    name: Swift Tests
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Test {{PROJECT_NAME_PASCAL}}Auth
+        working-directory: ios/{{PROJECT_NAME_PASCAL}}Auth
+        run: swift test --parallel
+
+      - name: Test {{PROJECT_NAME_PASCAL}}App
+        working-directory: ios/{{PROJECT_NAME_PASCAL}}App
+        run: swift test --parallel

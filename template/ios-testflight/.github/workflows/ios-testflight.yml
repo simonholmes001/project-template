@@ -1,0 +1,132 @@
+name: iOS TestFlight
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-testflight.yml'
+      - '.github/scripts/validate-ios-project.sh'
+      - '.github/scripts/write-ios-release-config.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upload-testflight:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Validate required secrets
+        shell: bash
+        env:
+          {{ENV_PREFIX}}_APP_IDENTIFIER: ${{ secrets.{{ENV_PREFIX}}_APP_IDENTIFIER }}
+          {{ENV_PREFIX}}_APPLE_ID: ${{ secrets.{{ENV_PREFIX}}_APPLE_ID }}
+          {{ENV_PREFIX}}_ITC_TEAM_ID: ${{ secrets.{{ENV_PREFIX}}_ITC_TEAM_ID }}
+          {{ENV_PREFIX}}_TEAM_ID: ${{ secrets.{{ENV_PREFIX}}_TEAM_ID }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          {{ENV_PREFIX}}_RECOGNITION_PROXY_BASE_URL: ${{ secrets.{{ENV_PREFIX}}_RECOGNITION_PROXY_BASE_URL }}
+          {{ENV_PREFIX}}_RECOGNITION_PROXY_KEY: ${{ secrets.{{ENV_PREFIX}}_RECOGNITION_PROXY_KEY }}
+          {{ENV_PREFIX}}_XCODE_PROJECT: ${{ secrets.{{ENV_PREFIX}}_XCODE_PROJECT }}
+          {{ENV_PREFIX}}_XCODE_WORKSPACE: ${{ secrets.{{ENV_PREFIX}}_XCODE_WORKSPACE }}
+          {{ENV_PREFIX}}_XCODE_SCHEME: ${{ secrets.{{ENV_PREFIX}}_XCODE_SCHEME }}
+        run: |
+          required=(
+            {{ENV_PREFIX}}_APP_IDENTIFIER
+            {{ENV_PREFIX}}_APPLE_ID
+            {{ENV_PREFIX}}_ITC_TEAM_ID
+            {{ENV_PREFIX}}_TEAM_ID
+            MATCH_GIT_URL
+            MATCH_PASSWORD
+            MATCH_KEYCHAIN_PASSWORD
+            MATCH_GIT_BASIC_AUTHORIZATION
+            APP_STORE_CONNECT_API_KEY_ID
+            APP_STORE_CONNECT_API_ISSUER_ID
+            {{ENV_PREFIX}}_RECOGNITION_PROXY_BASE_URL
+            {{ENV_PREFIX}}_RECOGNITION_PROXY_KEY
+            {{ENV_PREFIX}}_XCODE_SCHEME
+          )
+          for key in "${required[@]}"; do
+            if [ -z "${!key:-}" ]; then
+              echo "Missing required secret: $key" >&2
+              exit 1
+            fi
+          done
+          if [ -n "${{{ENV_PREFIX}}_XCODE_PROJECT:-}" ] && [ -n "${{{ENV_PREFIX}}_XCODE_WORKSPACE:-}" ]; then
+            echo "Set only one of {{ENV_PREFIX}}_XCODE_PROJECT or {{ENV_PREFIX}}_XCODE_WORKSPACE" >&2
+            exit 1
+          fi
+          if [ -z "${{{ENV_PREFIX}}_XCODE_PROJECT:-}" ] && [ -z "${{{ENV_PREFIX}}_XCODE_WORKSPACE:-}" ]; then
+            echo "Either {{ENV_PREFIX}}_XCODE_PROJECT or {{ENV_PREFIX}}_XCODE_WORKSPACE is required" >&2
+            exit 1
+          fi
+
+      - name: Write Release app configuration
+        shell: bash
+        env:
+          {{ENV_PREFIX}}_RECOGNITION_PROXY_BASE_URL: ${{ secrets.{{ENV_PREFIX}}_RECOGNITION_PROXY_BASE_URL }}
+          {{ENV_PREFIX}}_RECOGNITION_PROXY_KEY: ${{ secrets.{{ENV_PREFIX}}_RECOGNITION_PROXY_KEY }}
+        run: bash .github/scripts/write-ios-release-config.sh
+
+      - name: Decode App Store Connect API key
+        shell: bash
+        env:
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+        run: |
+          if [ -z "${APP_STORE_CONNECT_API_KEY_BASE64}" ]; then
+            echo "Missing required secret: APP_STORE_CONNECT_API_KEY_BASE64" >&2
+            exit 1
+          fi
+          umask 077
+          key_path="$(mktemp /tmp/{{REPO_NAME}}-authkey.XXXXXX.p8)"
+          echo "${APP_STORE_CONNECT_API_KEY_BASE64}" | base64 --decode > "$key_path"
+          chmod 600 "$key_path"
+          echo "APP_STORE_CONNECT_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@97ecb7b512899eb71ab1bf2310a624c6f1589ac6
+        with:
+          ruby-version: '3.1'
+          bundler: '2.5.23'
+          bundler-cache: true
+          working-directory: ios
+
+      - name: Validate iOS project, scheme, and privacy manifest
+        shell: bash
+        env:
+          {{ENV_PREFIX}}_XCODE_PROJECT: ${{ secrets.{{ENV_PREFIX}}_XCODE_PROJECT }}
+          {{ENV_PREFIX}}_XCODE_WORKSPACE: ${{ secrets.{{ENV_PREFIX}}_XCODE_WORKSPACE }}
+          {{ENV_PREFIX}}_XCODE_SCHEME: ${{ secrets.{{ENV_PREFIX}}_XCODE_SCHEME }}
+        run: bash .github/scripts/validate-ios-project.sh
+
+      - name: Upload internal TestFlight build
+        working-directory: ios
+        env:
+          {{ENV_PREFIX}}_APP_IDENTIFIER: ${{ secrets.{{ENV_PREFIX}}_APP_IDENTIFIER }}
+          {{ENV_PREFIX}}_APPLE_ID: ${{ secrets.{{ENV_PREFIX}}_APPLE_ID }}
+          {{ENV_PREFIX}}_ITC_TEAM_ID: ${{ secrets.{{ENV_PREFIX}}_ITC_TEAM_ID }}
+          {{ENV_PREFIX}}_TEAM_ID: ${{ secrets.{{ENV_PREFIX}}_TEAM_ID }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          {{ENV_PREFIX}}_XCODE_PROJECT: ${{ secrets.{{ENV_PREFIX}}_XCODE_PROJECT }}
+          {{ENV_PREFIX}}_XCODE_WORKSPACE: ${{ secrets.{{ENV_PREFIX}}_XCODE_WORKSPACE }}
+          {{ENV_PREFIX}}_XCODE_SCHEME: ${{ secrets.{{ENV_PREFIX}}_XCODE_SCHEME }}
+          {{ENV_PREFIX}}_BUILD_NUMBER: ${{ github.run_number }}
+        run: bundle exec fastlane ios upload_internal_testflight
+
+      - name: Cleanup App Store Connect API key
+        if: always()
+        shell: bash
+        run: rm -f "${APP_STORE_CONNECT_API_KEY_PATH:-}"

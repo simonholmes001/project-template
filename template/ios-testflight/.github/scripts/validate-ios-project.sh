@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_PATH="${{{ENV_PREFIX}}_XCODE_PROJECT:-}"
+WORKSPACE_PATH="${{{ENV_PREFIX}}_XCODE_WORKSPACE:-}"
+SCHEME="${{{ENV_PREFIX}}_XCODE_SCHEME:-}"
+MANIFEST_PATH="ios/{{PROJECT_NAME_PASCAL}}App/PrivacyInfo.xcprivacy"
+INFO_PLIST_PATH="ios/{{PROJECT_NAME_PASCAL}}/Info.plist"
+
+if [ -z "$SCHEME" ]; then
+  echo "{{ENV_PREFIX}}_XCODE_SCHEME is required" >&2
+  exit 1
+fi
+
+if [ -n "$PROJECT_PATH" ] && [ -n "$WORKSPACE_PATH" ]; then
+  echo "Set only one of {{ENV_PREFIX}}_XCODE_PROJECT or {{ENV_PREFIX}}_XCODE_WORKSPACE" >&2
+  exit 1
+fi
+
+if [ -z "$PROJECT_PATH" ] && [ -z "$WORKSPACE_PATH" ]; then
+  echo "Either {{ENV_PREFIX}}_XCODE_PROJECT or {{ENV_PREFIX}}_XCODE_WORKSPACE must be set" >&2
+  exit 1
+fi
+
+if [ -n "$PROJECT_PATH" ]; then
+  [ -d "$PROJECT_PATH" ] || { echo "Xcode project not found: $PROJECT_PATH" >&2; exit 1; }
+  LIST_JSON="$(xcodebuild -project "$PROJECT_PATH" -list -json)"
+else
+  [ -d "$WORKSPACE_PATH" ] || { echo "Xcode workspace not found: $WORKSPACE_PATH" >&2; exit 1; }
+  LIST_JSON="$(xcodebuild -workspace "$WORKSPACE_PATH" -list -json)"
+fi
+
+echo "$LIST_JSON" | jq -e --arg scheme "$SCHEME" '.project.schemes // .workspace.schemes | index($scheme) != null' >/dev/null || {
+  echo "Scheme not found: $SCHEME" >&2
+  exit 1
+}
+
+[ -f "$MANIFEST_PATH" ] || { echo "Missing privacy manifest: $MANIFEST_PATH" >&2; exit 1; }
+[ -f "$INFO_PLIST_PATH" ] || { echo "Missing app Info.plist: $INFO_PLIST_PATH" >&2; exit 1; }
+
+if command -v plutil >/dev/null 2>&1; then
+  plutil -lint "$MANIFEST_PATH" >/dev/null
+  plutil -lint "$INFO_PLIST_PATH" >/dev/null
+
+  # Enforce required top-level keys for submission readiness.
+  plutil -extract NSPrivacyTracking raw "$MANIFEST_PATH" >/dev/null
+  plutil -extract NSPrivacyCollectedDataTypes xml1 -o - "$MANIFEST_PATH" >/dev/null
+  plutil -extract NSPrivacyAccessedAPITypes xml1 -o - "$MANIFEST_PATH" >/dev/null
+  plutil -extract NSCameraUsageDescription raw "$INFO_PLIST_PATH" >/dev/null
+  plutil -extract NSPhotoLibraryUsageDescription raw "$INFO_PLIST_PATH" >/dev/null
+else
+  python3 - "$MANIFEST_PATH" "$INFO_PLIST_PATH" <<'PY'
+import plistlib
+import sys
+
+manifest_path = sys.argv[1]
+info_path = sys.argv[2]
+
+with open(manifest_path, "rb") as f:
+    data = plistlib.load(f)
+
+with open(info_path, "rb") as f:
+    info = plistlib.load(f)
+
+required = [
+    "NSPrivacyTracking",
+    "NSPrivacyCollectedDataTypes",
+    "NSPrivacyAccessedAPITypes",
+]
+
+for key in required:
+    if key not in data:
+        raise SystemExit(f"Missing required privacy key: {key}")
+
+for key in ["NSCameraUsageDescription", "NSPhotoLibraryUsageDescription"]:
+    if key not in info or not str(info[key]).strip():
+        raise SystemExit(f"Missing required usage description key: {key}")
+PY
+fi
+
+echo "iOS project and privacy manifest validation passed."

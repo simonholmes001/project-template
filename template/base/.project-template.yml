@@ -1,0 +1,13 @@
+template:
+  name: project-template
+  version: 0.1.0
+project:
+  name: "{{PROJECT_NAME}}"
+  repo: "{{REPO_NAME}}"
+  github_owner: "{{GITHUB_OWNER}}"
+  github_project_number: "{{PROJECT_NUMBER}}"
+  env_prefix: "{{ENV_PREFIX}}"
+  azure_location: "{{AZURE_LOCATION}}"
+profile: "{{PROFILE}}"
+modules:
+{{MODULE_LIST}}

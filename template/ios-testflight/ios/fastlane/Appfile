@@ -1,0 +1,4 @@
+app_identifier(ENV.fetch("{{ENV_PREFIX}}_APP_IDENTIFIER"))
+apple_id(ENV.fetch("{{ENV_PREFIX}}_APPLE_ID"))
+itc_team_id(ENV.fetch("{{ENV_PREFIX}}_ITC_TEAM_ID"))
+team_id(ENV.fetch("{{ENV_PREFIX}}_TEAM_ID"))

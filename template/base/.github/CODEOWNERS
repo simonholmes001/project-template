@@ -1,0 +1,25 @@
+# CODEOWNERS - {{PROJECT_NAME_UPPER}}
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# All paths require review from the project owner.
+# Add team members here as the project grows.
+
+# Default owner for everything
+*                               @{{GITHUB_OWNER}}
+
+# Platform and CI/CD
+.github/                        @{{GITHUB_OWNER}}
+scripts/                        @{{GITHUB_OWNER}}
+infrastructure/                  @{{GITHUB_OWNER}}
+
+# Backend, agents, and quant services
+backend/                         @{{GITHUB_OWNER}}
+agents/                          @{{GITHUB_OWNER}}
+quant/                           @{{GITHUB_OWNER}}
+
+# iOS
+ios/                            @{{GITHUB_OWNER}}
+
+# Architecture and product docs
+*.md                            @{{GITHUB_OWNER}}
+docs/                           @{{GITHUB_OWNER}}
