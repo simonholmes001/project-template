@@ -24,6 +24,13 @@ The App Registration pattern is the classic GitHub Actions Azure OIDC setup. It 
 
 The user-assigned managed identity pattern is a better default for new Azure-only apps because the deployment identity is an Azure resource. That makes it easier to express in Bicep/ARM and keep bootstrap closer to infrastructure-as-code.
 
+The template uses Voxa's current managed-identity variant:
+
+- repository secrets for Azure pipeline configuration;
+- default Azure region `swedencentral`;
+- a federated credential scoped to `refs/heads/main`;
+- immutable GitHub owner/repository numeric IDs when available.
+
 ## Decision Rule
 
 Use user-assigned managed identity plus OIDC when:
@@ -46,4 +53,3 @@ Use App Registration plus OIDC when:
 Kairos is not wrong if it uses App Registration plus federated credentials and no client secret.
 
 Voxa's managed identity approach should become the default for new Azure-only projects.
-

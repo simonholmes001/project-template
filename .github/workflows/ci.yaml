@@ -29,6 +29,8 @@ jobs:
             --name "Signal Desk" \
             --repo "signal-desk" \
             --github-owner "simonholmes001" \
+            --github-owner-id "31061938" \
+            --github-repo-id "123456789" \
             --project-number "11" \
             --destination "/tmp/project-template-signal-desk" \
             --profile azure-managed-identity-oidc \
@@ -44,6 +46,8 @@ jobs:
             --name "Signal Desk" \
             --repo "signal-desk" \
             --github-owner "simonholmes001" \
+            --github-owner-id "31061938" \
+            --github-repo-id "123456789" \
             --project-number "11" \
             --profile azure-managed-identity-oidc \
             --module ios-testflight \
@@ -81,4 +85,3 @@ jobs:
       - name: Test generated app-registration sample
         working-directory: /tmp/project-template-paper-trail
         run: npm test
-

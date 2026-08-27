@@ -23,7 +23,7 @@ Deja Groove and Kairos already share the same operating structure:
 
 Deja Groove adds mature iOS/TestFlight and Azure Function deployment files.
 Kairos has the same foundation with fewer app-specific deployment pieces.
-Voxa's `feature/setup-ci-hooks-actions` branch is moving toward the same structure and adds a stronger Azure bootstrap-as-code pattern.
+Voxa now follows the same structure on `main` and adds a stronger Azure bootstrap-as-code pattern.
 
 ## What Should Be Universal
 
@@ -85,4 +85,3 @@ The practical implementation should include a manifest file in each target repo,
 - enabled modules
 - files managed by the template
 - project-specific substitutions
-

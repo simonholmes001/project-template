@@ -19,12 +19,15 @@ Creates a local repository folder and applies the selected template overlays.
 Options:
   --repo NAME                 Repository slug. Defaults to kebab-case --name.
   --github-owner OWNER        GitHub owner. Defaults to simonholmes001.
+  --github-owner-id ID        Optional immutable GitHub owner numeric ID for Azure OIDC.
+  --github-repo-id ID         Optional immutable GitHub repository numeric ID for Azure OIDC.
+  --github-ref REF            GitHub ref allowed to deploy Azure resources. Defaults to refs/heads/main.
   --project-number NUMBER     GitHub Project v2 number for auto-sort workflow.
   --profile PROFILE           repo-only, azure-managed-identity-oidc, azure-app-registration-oidc.
   --module MODULE             Optional overlay. Repeatable. Supported: ios-testflight, backend-function.
   --description TEXT          package.json description.
   --env-prefix PREFIX         Prefix for iOS/App Store environment variables.
-  --azure-location LOCATION   Defaults to westeurope.
+  --azure-location LOCATION   Defaults to swedencentral.
   --create-github            Also create the GitHub repository with gh.
   --public                   Use with --create-github to create a public repo.
   --no-git                   Do not run git init.
@@ -37,6 +40,9 @@ while [ "$#" -gt 0 ]; do
     --name) PROJECT_NAME="$2"; shift 2 ;;
     --repo) REPO_NAME="$2"; shift 2 ;;
     --github-owner) GITHUB_OWNER="$2"; shift 2 ;;
+    --github-owner-id) GITHUB_OWNER_ID="$2"; shift 2 ;;
+    --github-repo-id) GITHUB_REPO_ID="$2"; shift 2 ;;
+    --github-ref) GITHUB_REF="$2"; shift 2 ;;
     --project-number) PROJECT_NUMBER="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     --module) MODULES+=("$2"); shift 2 ;;
@@ -71,6 +77,9 @@ apply_args=(
   --name "$PROJECT_NAME"
   --repo "$REPO_NAME"
   --github-owner "$GITHUB_OWNER"
+  --github-owner-id "$GITHUB_OWNER_ID"
+  --github-repo-id "$GITHUB_REPO_ID"
+  --github-ref "$GITHUB_REF"
   --project-number "$PROJECT_NUMBER"
   --profile "$PROFILE"
   --description "$PROJECT_DESCRIPTION"

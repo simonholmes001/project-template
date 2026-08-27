@@ -3,6 +3,9 @@ set -euo pipefail
 
 ENVIRONMENT="${1:-dev}"
 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-{{GITHUB_OWNER}}/{{REPO_NAME}}}"
+GITHUB_REF="${GITHUB_REF:-{{GITHUB_REF}}}"
+GITHUB_OWNER_ID="${GITHUB_OWNER_ID:-{{GITHUB_OWNER_ID}}}"
+GITHUB_REPO_ID="${GITHUB_REPO_ID:-{{GITHUB_REPO_ID}}}"
 LOCATION="${AZURE_LOCATION:-{{AZURE_LOCATION}}}"
 SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID:-}"
 PIPELINE_RG="${AZURE_PIPELINE_RESOURCE_GROUP:-rg-{{REPO_NAME}}-pipeline-identity}"
@@ -19,6 +22,17 @@ fi
 GITHUB_ORG="${GITHUB_REPOSITORY%%/*}"
 GITHUB_REPO="${GITHUB_REPOSITORY#*/}"
 
+if [ -z "$GITHUB_OWNER_ID" ] || [ -z "$GITHUB_REPO_ID" ]; then
+  if command -v gh >/dev/null 2>&1 && gh auth status -h github.com >/dev/null 2>&1; then
+    REPOSITORY_JSON="$(gh api "repos/${GITHUB_REPOSITORY}")"
+    GITHUB_OWNER_ID="${GITHUB_OWNER_ID:-$(echo "$REPOSITORY_JSON" | jq -r '.owner.id // empty')}"
+    GITHUB_REPO_ID="${GITHUB_REPO_ID:-$(echo "$REPOSITORY_JSON" | jq -r '.id // empty')}"
+  else
+    echo "Warning: gh is not authenticated; using name-based GitHub OIDC subject fallback." >&2
+    echo "For immutable subject claims, set GITHUB_OWNER_ID and GITHUB_REPO_ID." >&2
+  fi
+fi
+
 az account set --subscription "$SUBSCRIPTION_ID"
 
 az deployment sub create \
@@ -29,15 +43,17 @@ az deployment sub create \
     environmentName="$ENVIRONMENT" \
     location="$LOCATION" \
     githubOrg="$GITHUB_ORG" \
+    githubOrgId="$GITHUB_OWNER_ID" \
     githubRepo="$GITHUB_REPO" \
-    githubEnvironment="$ENVIRONMENT" \
+    githubRepoId="$GITHUB_REPO_ID" \
+    githubRef="$GITHUB_REF" \
     pipelineResourceGroupName="$PIPELINE_RG" \
     targetResourceGroupName="$TARGET_RG" \
     pipelineIdentityName="$IDENTITY_NAME" \
   --query properties.outputs
 
 echo
-echo "Copy these output values into the '${ENVIRONMENT}' GitHub environment variables:"
+echo "Copy these output values into repository secrets:"
 echo "AZURE_CLIENT_ID      = azureClientId.value"
 echo "AZURE_TENANT_ID      = azureTenantId.value"
 echo "AZURE_SUBSCRIPTION_ID= azureSubscriptionId.value"
