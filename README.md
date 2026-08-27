@@ -90,7 +90,6 @@ cd ~/Projects/Applications/Project_Template
   --name "Voxa" \
   --repo "voxa" \
   --github-owner "simonholmes001" \
-  --project-number "<github-project-number>" \
   --destination "../Voxa" \
   --profile azure-managed-identity-oidc \
   --module ios-testflight \
@@ -117,6 +116,8 @@ git commit -m "chore: bootstrap project foundation"
 gh repo create simonholmes001/voxa --private --source . --remote origin
 git push -u origin main
 ```
+
+After the GitHub repo exists, the Azure bootstrap script can resolve immutable GitHub owner/repo IDs automatically with `gh api`.
 
 If you want `new-project.sh` to create the GitHub repo too, add `--create-github`:
 
@@ -217,13 +218,24 @@ AZURE_SUBSCRIPTION_ID="<subscription-id>" \
 ./scripts/setup-azure-auth-for-pipeline.sh dev
 ```
 
-Copy the script outputs into the `dev` GitHub environment variables:
+Copy the script outputs into GitHub repository secrets:
 
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
 - `AZURE_SUBSCRIPTION_ID`
 - `AZURE_LOCATION`
 - `AZURE_RESOURCE_GROUP`
+
+Also configure:
+
+- `OPENAI_API_KEY`
+
+The generated Azure bootstrap follows the current Voxa pattern:
+
+- repository secrets for Azure pipeline configuration;
+- default region `swedencentral`;
+- GitHub OIDC scoped to `refs/heads/main`;
+- immutable GitHub owner/repository IDs when `gh` can resolve them.
 
 ## Current Status
 

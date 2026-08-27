@@ -3,8 +3,6 @@ targetScope = 'subscription'
 @description('Deployment environment name.')
 @allowed([
   'dev'
-  'staging'
-  'prod'
 ])
 param environmentName string = 'dev'
 
@@ -14,11 +12,17 @@ param location string = deployment().location
 @description('GitHub organization or user that owns the repository.')
 param githubOrg string = '{{GITHUB_OWNER}}'
 
+@description('Immutable GitHub organization/user ID used in OIDC subject claims.')
+param githubOrgId string = '{{GITHUB_OWNER_ID}}'
+
 @description('GitHub repository name.')
 param githubRepo string = '{{REPO_NAME}}'
 
-@description('GitHub environment name used by Azure deployment workflows.')
-param githubEnvironment string = environmentName
+@description('Immutable GitHub repository ID used in OIDC subject claims.')
+param githubRepoId string = '{{GITHUB_REPO_ID}}'
+
+@description('GitHub ref allowed to deploy Azure resources.')
+param githubRef string = '{{GITHUB_REF}}'
 
 @description('Resource group that contains CI/CD identity resources.')
 param pipelineResourceGroupName string = 'rg-{{REPO_NAME}}-pipeline-identity'
@@ -68,8 +72,10 @@ module pipelineIdentity './modules/pipeline-identity.bicep' = {
     location: location
     pipelineIdentityName: pipelineIdentityName
     githubOrg: githubOrg
+    githubOrgId: githubOrgId
     githubRepo: githubRepo
-    githubEnvironment: githubEnvironment
+    githubRepoId: githubRepoId
+    githubRef: githubRef
   }
 }
 

@@ -23,7 +23,6 @@ cd ~/Projects/Applications/Project_Template
   --name "My New App" \
   --repo "my-new-app" \
   --github-owner "simonholmes001" \
-  --project-number "<github-project-number>" \
   --destination "../My_New_App" \
   --profile azure-managed-identity-oidc \
   --module ios-testflight \
@@ -36,7 +35,7 @@ What each argument means:
 - `--name`: human-readable app name.
 - `--repo`: GitHub repository slug.
 - `--github-owner`: GitHub user or organization.
-- `--project-number`: GitHub Project v2 number used by the auto-sort workflow. You can omit this and set the `PROJECT_NUMBER` repository variable later.
+- `--project-number`: optional GitHub Project v2 number used by the auto-sort workflow. You can omit this and set the `PROJECT_NUMBER` repository variable later.
 - `--destination`: local folder to create.
 - `--profile`: main infrastructure/authentication style.
 - `--module`: optional extra template pack. Repeat it for multiple modules.
@@ -124,7 +123,16 @@ AZURE_SUBSCRIPTION_ID="<subscription-id>" \
 ./scripts/setup-azure-auth-for-pipeline.sh dev
 ```
 
-Then copy the printed outputs into the `dev` GitHub environment variables.
+Then copy the printed outputs into GitHub repository secrets.
+
+The bootstrap script uses Voxa's current Azure OIDC pattern. It creates a user-assigned managed identity and scopes the federated credential to `refs/heads/main`. If `gh` is authenticated and the GitHub repo exists, it resolves GitHub's immutable owner/repository numeric IDs automatically.
+
+That means the normal order is:
+
+1. generate the local repo;
+2. create/push the GitHub repo;
+3. run `scripts/setup-azure-auth-for-pipeline.sh dev`;
+4. copy the printed Azure values into repository secrets.
 
 ## Existing Repos
 

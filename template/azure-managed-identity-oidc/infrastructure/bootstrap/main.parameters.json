@@ -11,11 +11,17 @@
     "githubOrg": {
       "value": "{{GITHUB_OWNER}}"
     },
+    "githubOrgId": {
+      "value": "{{GITHUB_OWNER_ID}}"
+    },
     "githubRepo": {
       "value": "{{REPO_NAME}}"
     },
-    "githubEnvironment": {
-      "value": "dev"
+    "githubRepoId": {
+      "value": "{{GITHUB_REPO_ID}}"
+    },
+    "githubRef": {
+      "value": "{{GITHUB_REF}}"
     },
     "pipelineResourceGroupName": {
       "value": "rg-{{REPO_NAME}}-pipeline-identity"

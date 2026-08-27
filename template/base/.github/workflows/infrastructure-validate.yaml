@@ -6,14 +6,14 @@ on:
     paths:
       - "infrastructure/**"
       - ".github/workflows/infrastructure-validate.yaml"
+      - ".github/workflows/iac-lint.yaml"
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   validate-dev:
-    name: Validate Dev Infrastructure
+    name: Lint Dev Infrastructure
     runs-on: ubuntu-latest
     if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
@@ -24,62 +24,19 @@ jobs:
         id: detect
         shell: bash
         run: |
-          if find infrastructure -name '*.bicep' -print -quit | grep -q .; then
+          if [ -f infrastructure/bicep/main.bicep ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "needs_azure=true" >> "$GITHUB_OUTPUT"
-          elif [ -d infrastructure ] && [ -x infrastructure/scripts/validate.sh ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "needs_azure=false" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "needs_azure=false" >> "$GITHUB_OUTPUT"
             echo "{{PROJECT_NAME}} infrastructure is not present yet; Azure validation is skipped."
           fi
 
       - name: Run infrastructure guard tests
         if: steps.detect.outputs.exists == 'true'
         shell: bash
-        run: |
-          if [ -x ./infrastructure/scripts/guard-tests.sh ]; then
-            bash ./infrastructure/scripts/guard-tests.sh
-          fi
+        run: bash ./infrastructure/scripts/guard-tests.sh
 
       - name: Lint {{PROJECT_NAME}} infrastructure
         if: steps.detect.outputs.exists == 'true'
         shell: bash
-        run: |
-          if [ -x ./infrastructure/scripts/validate.sh ]; then
-            bash ./infrastructure/scripts/validate.sh dev --lint-only
-          else
-            for file in $(find infrastructure -name '*.bicep'); do
-              az bicep build --file "$file"
-            done
-          fi
-
-      - name: Login to Azure (OIDC)
-        if: steps.detect.outputs.needs_azure == 'true'
-        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Validate {{PROJECT_NAME}} infrastructure
-        if: steps.detect.outputs.needs_azure == 'true'
-        shell: bash
-        run: |
-          if [ -x ./infrastructure/scripts/validate.sh ]; then
-            bash ./infrastructure/scripts/validate.sh dev
-          else
-            echo "No validate.sh present; lint-only Bicep validation completed."
-          fi
-
-      - name: Run {{PROJECT_NAME}} infrastructure what-if
-        if: steps.detect.outputs.needs_azure == 'true'
-        shell: bash
-        run: |
-          if [ -x ./infrastructure/scripts/validate.sh ]; then
-            bash ./infrastructure/scripts/validate.sh dev --what-if
-          else
-            echo "No validate.sh present; what-if skipped."
-          fi
+        run: bash ./infrastructure/scripts/validate.sh dev --lint-only

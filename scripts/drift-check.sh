@@ -13,6 +13,10 @@ Usage:
 
 Reports files that are missing or different from the rendered template.
 It does not write to the target repository.
+
+Options match scripts/apply-template.sh, including --repo, --github-owner,
+--github-owner-id, --github-repo-id, --github-ref, --project-number,
+--profile, --module, --description, --env-prefix, and --azure-location.
 EOF
 }
 
@@ -22,6 +26,9 @@ while [ "$#" -gt 0 ]; do
     --name) PROJECT_NAME="$2"; shift 2 ;;
     --repo) REPO_NAME="$2"; shift 2 ;;
     --github-owner) GITHUB_OWNER="$2"; shift 2 ;;
+    --github-owner-id) GITHUB_OWNER_ID="$2"; shift 2 ;;
+    --github-repo-id) GITHUB_REPO_ID="$2"; shift 2 ;;
+    --github-ref) GITHUB_REF="$2"; shift 2 ;;
     --project-number) PROJECT_NUMBER="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     --module) MODULES+=("$2"); shift 2 ;;
